@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MyGO Meme Chat</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: #f0f2f5;
+      }
+      #chat-container {
+        height: 70vh;
+        overflow-y: auto;
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .message {
+        padding: 10px 15px;
+        border-radius: 15px;
+        max-width: 80%;
+        line-height: 1.5;
+      }
+      .user-message {
+        align-self: flex-end;
+        background: #007bff;
+        color: white;
+      }
+      .ai-message {
+        align-self: flex-start;
+        background: #e9ecef;
+        color: black;
+      }
+      .meme-image {
+        max-width: 100%;
+        border-radius: 10px;
+        margin-top: 5px;
+        display: block;
+      }
+      #input-area {
+        margin-top: 20px;
+        display: flex;
+        gap: 10px;
+      }
+      input {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 16px;
+      }
+      button {
+        padding: 10px 20px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MyGO Meme Chat</h1>
+    <div id="chat-container"></div>
+    <div id="input-area">
+      <input
+        type="text"
+        id="message-input"
+        placeholder="Say something..."
+        autofocus
+      />
+      <button id="send-btn">Send</button>
+    </div>
+
+    <script>
+      const chatContainer = document.getElementById("chat-container");
+      const messageInput = document.getElementById("message-input");
+      const sendBtn = document.getElementById("send-btn");
+
+      // API Key Management
+      function getApiKey() {
+        let key = localStorage.getItem("MYGO_API_KEY");
+        if (!key) {
+          key = prompt(
+            "Please enter your Gemini API Key (It will be saved locally):"
+          );
+          if (key) {
+            localStorage.setItem("MYGO_API_KEY", key);
+          } else {
+            alert("API Key is required to chat.");
+          }
+        }
+        return key;
+      }
+
+      // Check on load
+      let apiKey = getApiKey();
+
+      async function sendMessage() {
+        if (!apiKey) {
+          apiKey = getApiKey();
+          if (!apiKey) return;
+        }
+
+        const text = messageInput.value.trim();
+        if (!text) return;
+
+        // Add user message
+        addMessage(text, "user");
+        messageInput.value = "";
+
+        // Create AI message placeholder
+        const aiMessageDiv = addMessage("...", "ai");
+
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey, // Send Key
+            },
+            body: JSON.stringify({ message: text }),
+          });
+
+          if (response.status === 401) {
+            localStorage.removeItem("MYGO_API_KEY");
+            apiKey = null;
+            throw new Error("Invalid API Key. Please refresh and try again.");
+          }
+
+          const query = await response.text();
+
+          // Clear "..."
+          aiMessageDiv.textContent = "";
+
+          // The entire response is the query
+          const img = document.createElement("img");
+          img.className = "meme-image";
+          img.alt = `Meme: ${query}`;
+
+          // Fetch and display meme
+          fetchMeme(query, img, aiMessageDiv);
+        } catch (error) {
+          aiMessageDiv.textContent = "Error: " + error.message;
+        }
+      }
+
+      function addMessage(text, role) {
+        const div = document.createElement("div");
+        div.className = `message ${role}-message`;
+        div.textContent = text;
+        chatContainer.appendChild(div);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        return div;
+      }
+
+      async function fetchMeme(query, imgElement, containerDiv) {
+        try {
+          const res = await fetch(`/api/meme?q=${encodeURIComponent(query)}`);
+          if (!res.ok) throw new Error("Proxy error");
+
+          const data = await res.json();
+          if (data.data && data.data.length > 0) {
+            imgElement.src = data.data[0].url;
+            containerDiv.appendChild(imgElement);
+          } else {
+            containerDiv.textContent = `(No meme found for: "${query}")`;
+            containerDiv.style.color = "red";
+          }
+        } catch (e) {
+          console.error("Failed to fetch meme", e);
+          containerDiv.textContent = `(Failed to load meme: "${query}")`;
+          containerDiv.style.color = "red";
+        }
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+
+      sendBtn.addEventListener("click", sendMessage);
+      messageInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") sendMessage();
+      });
+    </script>
+  </body>
+</html>
