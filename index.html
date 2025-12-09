@@ -163,16 +163,21 @@
             },
           });
 
-          // Construct Prompt
-          const historyText = chatHistory
-            .slice(-5)
-            .map((msg) => {
-              const label = msg.role === "user" ? "User" : "Bot";
-              return `${label}: ${msg.content}`;
-            })
-            .join("\n");
+          // Helper: Recursive LLM Call
+          async function getLLMResponse(
+            retryCount = 0,
+            lastInvalidText = null
+          ) {
+            // Construct Prompt
+            const historyText = chatHistory
+              .slice(-5)
+              .map((msg) => {
+                const label = msg.role === "user" ? "User" : "Bot";
+                return `${label}: ${msg.content}`;
+              })
+              .join("\n");
 
-          const fullPrompt = `
+            let fullPrompt = `
     TASK: You are MyGO Meme Chat Bot.
     You can ONLY communicate by choosing one sentence from the "ALLOWED RESPONSES" list below.
     
@@ -193,27 +198,50 @@
     BEST RESPONSE (Exact Chinese string from list):
     `;
 
-          // Call LLM
-          const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-          });
+            if (retryCount > 0 && lastInvalidText) {
+              fullPrompt += `\n\nSYSTEM WARNING: You previously output "${lastInvalidText}" which is NOT in the list. Please pick a VALID response from the list above.`;
+            }
 
-          const responseText = result.response.text().trim();
-          console.log("LLM Response:", responseText);
+            // Call LLM
+            const result = await model.generateContent({
+              contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+            });
 
-          // Find Meme (Validation)
-          let selectedMeme = MEME_DATABASE.find((m) => m.alt === responseText);
-          if (!selectedMeme) {
-            selectedMeme = MEME_DATABASE.find(
-              (m) =>
-                m.alt.includes(responseText) || responseText.includes(m.alt)
+            const responseText = result.response.text().trim();
+            console.log(
+              `LLM Suggestion (Try ${retryCount + 1}):`,
+              responseText
             );
+
+            // Validate
+            const match =
+              MEME_DATABASE.find((m) => m.alt === responseText) ||
+              MEME_DATABASE.find(
+                (m) => m.alt.includes(responseText) && responseText.length > 2
+              ) ||
+              MEME_DATABASE.find((m) => responseText.includes(m.alt));
+
+            if (match) return match;
+
+            // Retry logic
+            if (retryCount < 1) {
+              // Retry once
+              console.warn("Invalid response, retrying...");
+              return await getLLMResponse(retryCount + 1, responseText);
+            }
+
+            return null; // Failed after retries
           }
-          // Last ditch
+
+          // Execute Logic
+          let selectedMeme = await getLLMResponse();
+
+          // Ultimate Fallback: Random Meme
           if (!selectedMeme) {
-            selectedMeme = MEME_DATABASE.find((m) =>
-              responseText.includes(m.alt)
-            );
+            console.error("AI Failed to pick meme. Using Random Fallback.");
+            selectedMeme =
+              MEME_DATABASE[Math.floor(Math.random() * MEME_DATABASE.length)];
+            // Ensure we don't pick something completely empty if DB broken, but DB load checked earlier
           }
 
           // Clear "..."
@@ -227,20 +255,33 @@
             aiMessageDiv.appendChild(img);
 
             chatHistory.push({ role: "ai", content: selectedMeme.alt });
-          } else {
-            aiMessageDiv.textContent = `(No meme found for: "${responseText}")`;
-            chatHistory.push({ role: "ai", content: "(No match)" });
           }
         } catch (error) {
           console.error(error);
-          aiMessageDiv.textContent = "Error: " + error.message;
+          // Even on Error (e.g. Network), try random fallback if we have DB?
+          // If apiKey invalid, show error.
           if (
             error.message.includes("401") ||
             error.message.includes("API key")
           ) {
+            aiMessageDiv.textContent = "Error: Invalid API Key. Cleared.";
             localStorage.removeItem("MYGO_API_KEY");
             apiKey = null;
-            aiMessageDiv.textContent += " (Key cleared, try again)";
+          } else {
+            // Fallback for network error if DB loaded
+            if (MEME_DATABASE.length > 0) {
+              aiMessageDiv.textContent = ""; // clear ...
+              const randomMeme =
+                MEME_DATABASE[Math.floor(Math.random() * MEME_DATABASE.length)];
+              const img = document.createElement("img");
+              img.className = "meme-image";
+              img.src = randomMeme.url;
+              img.alt = `Meme: ${randomMeme.alt}`;
+              aiMessageDiv.appendChild(img);
+              chatHistory.push({ role: "ai", content: randomMeme.alt });
+            } else {
+              aiMessageDiv.textContent = "Error: " + error.message;
+            }
           }
         }
 
