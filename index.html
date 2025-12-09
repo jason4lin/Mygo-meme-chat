@@ -173,27 +173,24 @@
             .join("\n");
 
           const fullPrompt = `
-    TASK: You are a Meme Selection Engine.
+    TASK: You are MyGO Meme Chat Bot.
+    You can ONLY communicate by choosing one sentence from the "ALLOWED RESPONSES" list below.
     
-    CONTEXT: The user is chatting with you. You must reply with a meme.
-    The "List of Valid Outputs" below contains the "Alt Text" (Descriptions) of the memes you have.
-    Most of them are in Traditional Chinese.
-    
-    HISTORY:
-    ${historyText}
-    
-    INPUT User Message (Language varies): "${text}"
+    USER INPUT: "${text}"
     
     INSTRUCTION:
-    1. Analyze the User Message.
-    2. If the message is in English (e.g. "I am hungry"), mentally translate it or find the equivalent Chinese sentiment (e.g. "肚子餓").
-    3. Look through the "LIST OF VALID OUTPUTS" to find the BEST match for that sentiment.
-    4. CRITICAL: You MUST output the EXACT string from the list. Do not translate the output. Keep it in Chinese as listed.
+    1. Understand the USER INPUT.
+    2. Select the most appropriate RESPONSE from the "ALLOWED RESPONSES" list.
+       - The response should answer the user or continue the conversation naturally.
+       - Do NOT just repeat the user's input.
+       - Do NOT output anything not in the list.
+       - If the user is asking a question, answer it with a meme.
+       - If the user is greeting, greet back.
     
-     LIST OF VALID OUTPUTS:
+     ALLOWED RESPONSES:
     ${MEME_DATABASE.map((m) => m.alt).join("\n")}
     
-    BEST MATCHING ALT TEXT (Exact Chinese string from list):
+    BEST RESPONSE (Exact Chinese string from list):
     `;
 
           // Call LLM
