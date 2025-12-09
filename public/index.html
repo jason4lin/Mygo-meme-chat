@@ -84,12 +84,39 @@
       <button id="send-btn">Send</button>
     </div>
 
-    <script>
+    <!-- Import Google Generative AI SDK -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/generative-ai": "https://esm.run/@google/generative-ai"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import { GoogleGenerativeAI } from "@google/generative-ai";
+
       const chatContainer = document.getElementById("chat-container");
       const messageInput = document.getElementById("message-input");
       const sendBtn = document.getElementById("send-btn");
 
-      // API Key Management
+      let MEME_DATABASE = [];
+      let chatHistory = []; // Local history state
+
+      // 1. Load Memes
+      async function loadMemes() {
+        try {
+          const res = await fetch("memes.json");
+          MEME_DATABASE = await res.json();
+          console.log(`Loaded ${MEME_DATABASE.length} memes.`);
+        } catch (e) {
+          console.error("Failed to load memes.json", e);
+          alert("Error: Could not load meme database.");
+        }
+      }
+      loadMemes();
+
+      // 2. API Key Management
       function getApiKey() {
         let key = localStorage.getItem("MYGO_API_KEY");
         if (!key) {
@@ -119,42 +146,108 @@
 
         // Add user message
         addMessage(text, "user");
+        chatHistory.push({ role: "user", content: text });
         messageInput.value = "";
 
         // Create AI message placeholder
         const aiMessageDiv = addMessage("...", "ai");
 
         try {
-          const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey, // Send Key
+          // Initialize GenAI
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({
+            model: "gemini-2.0-flash",
+            generationConfig: {
+              temperature: 0.5,
+              maxOutputTokens: 20,
             },
-            body: JSON.stringify({ message: text }),
           });
 
-          if (response.status === 401) {
-            localStorage.removeItem("MYGO_API_KEY");
-            apiKey = null;
-            throw new Error("Invalid API Key. Please refresh and try again.");
-          }
+          // Construct Prompt
+          const historyText = chatHistory
+            .slice(-5)
+            .map((msg) => {
+              const label = msg.role === "user" ? "User" : "Bot";
+              return `${label}: ${msg.content}`;
+            })
+            .join("\n");
 
-          const query = await response.text();
+          const fullPrompt = `
+    TASK: You are a Meme Selection Engine.
+    
+    CONTEXT: The user is chatting with you. You must reply with a meme.
+    The "List of Valid Outputs" below contains the "Alt Text" (Descriptions) of the memes you have.
+    Most of them are in Traditional Chinese.
+    
+    HISTORY:
+    ${historyText}
+    
+    INPUT User Message (Language varies): "${text}"
+    
+    INSTRUCTION:
+    1. Analyze the User Message.
+    2. If the message is in English (e.g. "I am hungry"), mentally translate it or find the equivalent Chinese sentiment (e.g. "肚子餓").
+    3. Look through the "LIST OF VALID OUTPUTS" to find the BEST match for that sentiment.
+    4. CRITICAL: You MUST output the EXACT string from the list. Do not translate the output. Keep it in Chinese as listed.
+    
+     LIST OF VALID OUTPUTS:
+    ${MEME_DATABASE.map((m) => m.alt).join("\n")}
+    
+    BEST MATCHING ALT TEXT (Exact Chinese string from list):
+    `;
+
+          // Call LLM
+          const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+          });
+
+          const responseText = result.response.text().trim();
+          console.log("LLM Response:", responseText);
+
+          // Find Meme (Validation)
+          let selectedMeme = MEME_DATABASE.find((m) => m.alt === responseText);
+          if (!selectedMeme) {
+            selectedMeme = MEME_DATABASE.find(
+              (m) =>
+                m.alt.includes(responseText) || responseText.includes(m.alt)
+            );
+          }
+          // Last ditch
+          if (!selectedMeme) {
+            selectedMeme = MEME_DATABASE.find((m) =>
+              responseText.includes(m.alt)
+            );
+          }
 
           // Clear "..."
           aiMessageDiv.textContent = "";
 
-          // The entire response is the query
-          const img = document.createElement("img");
-          img.className = "meme-image";
-          img.alt = `Meme: ${query}`;
+          if (selectedMeme) {
+            const img = document.createElement("img");
+            img.className = "meme-image";
+            img.src = selectedMeme.url;
+            img.alt = `Meme: ${selectedMeme.alt}`;
+            aiMessageDiv.appendChild(img);
 
-          // Fetch and display meme
-          fetchMeme(query, img, aiMessageDiv);
+            chatHistory.push({ role: "ai", content: selectedMeme.alt });
+          } else {
+            aiMessageDiv.textContent = `(No meme found for: "${responseText}")`;
+            chatHistory.push({ role: "ai", content: "(No match)" });
+          }
         } catch (error) {
+          console.error(error);
           aiMessageDiv.textContent = "Error: " + error.message;
+          if (
+            error.message.includes("401") ||
+            error.message.includes("API key")
+          ) {
+            localStorage.removeItem("MYGO_API_KEY");
+            apiKey = null;
+            aiMessageDiv.textContent += " (Key cleared, try again)";
+          }
         }
+
+        chatContainer.scrollTop = chatContainer.scrollHeight;
       }
 
       function addMessage(text, role) {
@@ -164,27 +257,6 @@
         chatContainer.appendChild(div);
         chatContainer.scrollTop = chatContainer.scrollHeight;
         return div;
-      }
-
-      async function fetchMeme(query, imgElement, containerDiv) {
-        try {
-          const res = await fetch(`/api/meme?q=${encodeURIComponent(query)}`);
-          if (!res.ok) throw new Error("Proxy error");
-
-          const data = await res.json();
-          if (data.data && data.data.length > 0) {
-            imgElement.src = data.data[0].url;
-            containerDiv.appendChild(imgElement);
-          } else {
-            containerDiv.textContent = `(No meme found for: "${query}")`;
-            containerDiv.style.color = "red";
-          }
-        } catch (e) {
-          console.error("Failed to fetch meme", e);
-          containerDiv.textContent = `(Failed to load meme: "${query}")`;
-          containerDiv.style.color = "red";
-        }
-        chatContainer.scrollTop = chatContainer.scrollHeight;
       }
 
       sendBtn.addEventListener("click", sendMessage);
